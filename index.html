@@ -487,22 +487,30 @@ function extractFromPaste(text) {
     }
   }
 
+  // Helper: find field by partial key match
+  function getField(...keywords) {
+    for (const key of Object.keys(fields)) {
+      if (keywords.every(kw => key.includes(kw))) return fields[key];
+    }
+    return '';
+  }
+
   // Extract name from Patient First/Last Name fields
-  const firstName = fields['patient first name'] || '';
-  const lastName = fields['patient last name'] || '';
+  const firstName = getField('first', 'name') || '';
+  const lastName = getField('last', 'name') || '';
   if (lastName || firstName) {
     result.name = lastName && firstName ? `${lastName}, ${firstName}` : (lastName || firstName);
   }
 
   // Extract DOB
-  result.dob = fields['date of birth'] || '';
+  result.dob = getField('birth') || getField('dob') || '';
 
   // Extract facility & room for context
-  result.facility = fields['hospital or facility'] || '';
-  result.room = fields['room number'] || '';
+  result.facility = getField('hospital') || getField('facility') || '';
+  result.room = getField('room') || '';
 
-  // Extract callback number
-  result.callback = fields['callback number'] || '';
+  // Extract callback number (but not "need callback")
+  result.callback = getField('callback', 'number') || '';
 
   // Build message from Reason field + any extra context
   const parts = [];
@@ -511,7 +519,7 @@ function extractFromPaste(text) {
   if (result.callback) parts.push(`Callback: ${result.callback}`);
   const context = parts.length ? parts.join(' | ') : '';
 
-  const reason = fields['reason'] || '';
+  const reason = getField('reason') || '';
   if (context && reason) {
     result.message = `${context}\n${reason}`;
   } else if (reason) {
@@ -520,8 +528,9 @@ function extractFromPaste(text) {
     result.message = context;
   }
 
-  // If no PerfectServe fields matched, fall back to generic parsing
-  if (!result.name && !result.dob && !reason) {
+  // If no PerfectServe key:value fields matched at all, fall back to generic parsing
+  const hadPerfectServeFields = Object.keys(fields).length >= 3;
+  if (!hadPerfectServeFields && !result.name && !result.dob && !reason) {
     const allLines = lines.map(l => l.trim()).filter(Boolean);
     // Try DOB pattern
     const dobRegex = /\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/;
@@ -608,10 +617,10 @@ function closeModal() {
 function onPasteInput() {
   const text = pasteArea.value;
   const extracted = extractFromPaste(text);
-  // Only auto-fill if field is currently empty (don't overwrite user edits)
-  if (!fieldName.value) fieldName.value = extracted.name;
-  if (!fieldDob.value) fieldDob.value = extracted.dob;
-  if (!fieldMessage.value) fieldMessage.value = extracted.message;
+  // Always overwrite fields on paste — user can edit after
+  fieldName.value = extracted.name;
+  fieldDob.value = extracted.dob;
+  fieldMessage.value = extracted.message;
 }
 
 function savePatient() {
