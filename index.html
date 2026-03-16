@@ -336,6 +336,8 @@ body {
     <label for="pasteArea">Paste PerfectServe Text</label>
     <textarea id="pasteArea" class="paste-area" placeholder="Long-press in Photos → Select All → Copy → Paste here"></textarea>
 
+    <div id="debugParse" style="margin-top:10px;padding:8px;background:#0d1b2a;border-radius:6px;font-size:11px;color:#888;white-space:pre-wrap;display:none;font-family:monospace;max-height:120px;overflow-y:auto;"></div>
+
     <hr class="separator">
 
     <label for="fieldName">Patient Name</label>
@@ -487,39 +489,26 @@ function extractFromPaste(text) {
     }
   }
 
-  // Helper: find field by partial key match
-  function getField(...keywords) {
-    for (const key of Object.keys(fields)) {
-      if (keywords.every(kw => key.includes(kw))) return fields[key];
-    }
-    return '';
-  }
-
-  // Extract name from Patient First/Last Name fields
-  const firstName = getField('first', 'name') || '';
-  const lastName = getField('last', 'name') || '';
+  // Extract fields by exact key (lowercase)
+  const firstName = fields['patient first name'] || '';
+  const lastName = fields['patient last name'] || '';
   if (lastName || firstName) {
     result.name = lastName && firstName ? `${lastName}, ${firstName}` : (lastName || firstName);
   }
 
-  // Extract DOB
-  result.dob = getField('birth') || getField('dob') || '';
+  result.dob = fields['date of birth'] || '';
+  result.facility = fields['hospital or facility'] || '';
+  result.room = fields['room number'] || '';
+  result.callback = fields['callback number'] || '';
 
-  // Extract facility & room for context
-  result.facility = getField('hospital') || getField('facility') || '';
-  result.room = getField('room') || '';
-
-  // Extract callback number (but not "need callback")
-  result.callback = getField('callback', 'number') || '';
-
-  // Build message from Reason field + any extra context
+  // Build message from Reason field + context line
   const parts = [];
   if (result.facility) parts.push(result.facility);
   if (result.room) parts.push(`Rm: ${result.room}`);
   if (result.callback) parts.push(`Callback: ${result.callback}`);
   const context = parts.length ? parts.join(' | ') : '';
 
-  const reason = getField('reason') || '';
+  const reason = fields['reason'] || '';
   if (context && reason) {
     result.message = `${context}\n${reason}`;
   } else if (reason) {
@@ -542,6 +531,10 @@ function extractFromPaste(text) {
     if (allLines.length > 0) result.name = allLines[0];
     if (allLines.length > 1) result.message = allLines.slice(1).join('\n');
   }
+
+  // DEBUG: log parsed keys so we can see what Live Text actually produces
+  console.log('Parsed fields:', JSON.stringify(fields, null, 2));
+  console.log('Extracted:', JSON.stringify(result, null, 2));
 
   return result;
 }
@@ -617,10 +610,24 @@ function closeModal() {
 function onPasteInput() {
   const text = pasteArea.value;
   const extracted = extractFromPaste(text);
-  // Always overwrite fields on paste — user can edit after
   fieldName.value = extracted.name;
   fieldDob.value = extracted.dob;
   fieldMessage.value = extracted.message;
+
+  // Show debug info so we can see what keys Live Text produced
+  const dbg = document.getElementById('debugParse');
+  if (text.trim()) {
+    const lines = text.trim().split('\n');
+    const keys = [];
+    lines.forEach(l => {
+      const m = l.match(/^([^:]+):\s*(.*)$/);
+      if (m) keys.push(`"${m[1].trim().toLowerCase()}" → "${m[2].trim()}"`);
+    });
+    dbg.textContent = 'Parsed keys:\n' + (keys.length ? keys.join('\n') : '(no key:value lines found)');
+    dbg.style.display = 'block';
+  } else {
+    dbg.style.display = 'none';
+  }
 }
 
 function savePatient() {
