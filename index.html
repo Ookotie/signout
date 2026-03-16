@@ -460,77 +460,79 @@ function updateLastSaved() {
 }
 
 // ── Parser ──
+// PerfectServe Live Text format:
+//   Callback Number: ...
+//   Hospital or Facility: ...
+//   Message From: ...
+//   Patient First Name: ...
+//   Patient Last Name: ...
+//   Date of Birth: ...
+//   Room Number: ...
+//   Reason: ...
+//   Need Callback: ...
 function extractFromPaste(text) {
-  const result = { name: '', dob: '', message: '' };
+  const result = { name: '', dob: '', message: '', facility: '', room: '', callback: '' };
   if (!text.trim()) return result;
 
-  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  // Try to parse as PerfectServe key:value format
+  const fields = {};
+  const lines = text.trim().split('\n');
+  const usedLines = new Set();
 
-  // Extract DOB — look for date patterns
-  const dobRegex = /\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/;
-  let dobLineIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(dobRegex);
+    const match = lines[i].match(/^([^:]+):\s*(.*)$/);
     if (match) {
-      // Check if this line looks like a DOB line (contains DOB/dob/birth or is a standalone date)
-      const line = lines[i].toLowerCase();
-      if (line.includes('dob') || line.includes('birth') || line.includes('date of birth') || lines[i].trim() === match[1]) {
-        result.dob = match[1];
-        dobLineIdx = i;
-        break;
-      }
-    }
-  }
-  // If no DOB-labeled line found, take first date match
-  if (!result.dob) {
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(dobRegex);
-      if (match) {
-        result.dob = match[1];
-        dobLineIdx = i;
-        break;
-      }
+      fields[match[1].trim().toLowerCase()] = match[2].trim();
+      usedLines.add(i);
     }
   }
 
-  // Extract name — look for name patterns
-  // Try: "Patient: Last, First" or "Name: Last, First" or first line with comma pattern
-  const namePatterns = [
-    /(?:patient|name|pt)\s*[:]\s*(.+)/i,
-    /^([A-Z][a-zA-Z'-]+,\s*[A-Z][a-zA-Z'-]+)/,
-    /^([A-Z][a-zA-Z'-]+\s+[A-Z][a-zA-Z'-]+)$/,
-  ];
-
-  for (let i = 0; i < Math.min(lines.length, 5); i++) {
-    if (i === dobLineIdx) continue;
-    for (const pat of namePatterns) {
-      const match = lines[i].match(pat);
-      if (match) {
-        result.name = match[1].trim();
-        // Remove this line from what becomes the message
-        lines[i] = '';
-        break;
-      }
-    }
-    if (result.name) break;
+  // Extract name from Patient First/Last Name fields
+  const firstName = fields['patient first name'] || '';
+  const lastName = fields['patient last name'] || '';
+  if (lastName || firstName) {
+    result.name = lastName && firstName ? `${lastName}, ${firstName}` : (lastName || firstName);
   }
 
-  // If no name found, use first non-empty line
-  if (!result.name && lines.length > 0) {
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i] && i !== dobLineIdx) {
-        result.name = lines[i];
-        lines[i] = '';
-        break;
-      }
-    }
+  // Extract DOB
+  result.dob = fields['date of birth'] || '';
+
+  // Extract facility & room for context
+  result.facility = fields['hospital or facility'] || '';
+  result.room = fields['room number'] || '';
+
+  // Extract callback number
+  result.callback = fields['callback number'] || '';
+
+  // Build message from Reason field + any extra context
+  const parts = [];
+  if (result.facility) parts.push(result.facility);
+  if (result.room) parts.push(`Rm: ${result.room}`);
+  if (result.callback) parts.push(`Callback: ${result.callback}`);
+  const context = parts.length ? parts.join(' | ') : '';
+
+  const reason = fields['reason'] || '';
+  if (context && reason) {
+    result.message = `${context}\n${reason}`;
+  } else if (reason) {
+    result.message = reason;
+  } else if (context) {
+    result.message = context;
   }
 
-  // Remove DOB line from message
-  if (dobLineIdx >= 0) lines[dobLineIdx] = '';
-
-  // Message = remaining lines
-  result.message = lines.filter(l => l.trim()).join('\n');
+  // If no PerfectServe fields matched, fall back to generic parsing
+  if (!result.name && !result.dob && !reason) {
+    const allLines = lines.map(l => l.trim()).filter(Boolean);
+    // Try DOB pattern
+    const dobRegex = /\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/;
+    for (const line of allLines) {
+      const m = line.match(dobRegex);
+      if (m) { result.dob = m[1]; break; }
+    }
+    // Use first line as name, rest as message
+    if (allLines.length > 0) result.name = allLines[0];
+    if (allLines.length > 1) result.message = allLines.slice(1).join('\n');
+  }
 
   return result;
 }
